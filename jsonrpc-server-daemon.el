@@ -1,10 +1,63 @@
 (require 'json-rpc-server)
+(require 'json)
 
 (defvar jsonrpc-server-process nil)
+(defvar mcp-server-initialized nil
+  "Whether the MCP server has been initialized.")
+(defvar mcp-client-ready nil
+  "Whether the client has sent initialized notification.")
 
+;; MCP initialization method
+(defun initialize (&optional protocol-version capabilities client-info)
+  "Handle MCP initialization request."
+  ;; The json-rpc-server library passes params as individual arguments
+  ;; protocol-version comes as ("protocolVersion" . "2024-11-05")
+  (let ((actual-protocol-version 
+         (if (consp protocol-version)
+             (cdr protocol-version)  ; Extract the value from the cons cell
+           protocol-version)))
+    
+    (unless actual-protocol-version
+      (error "Protocol version is required"))
+    
+    ;; Validate protocol version
+    (unless (string= actual-protocol-version "2024-11-05")
+      (error "Unsupported protocol version: %s. Server supports: 2024-11-05" actual-protocol-version))
+    
+    (setq mcp-server-initialized t)
+    
+    ;; Return server capabilities and info
+    `((protocolVersion . "2024-11-05")
+      (capabilities . ((logging . ())
+                      (prompts . ((listChanged . t)))
+                      (resources . ((subscribe . t)
+                                   (listChanged . t)))
+                      (tools . ((listChanged . t)))))
+      (serverInfo . ((name . "emacs-mcp-server")
+                    (title . "Emacs MCP Server")
+                    (version . "1.0.0")))
+      (instructions . "This is an Emacs-based MCP server for demonstration purposes."))))
+
+;; Handle initialized notification
+(defun notifications/initialized ()
+  "Handle initialized notification from client."
+  (setq mcp-client-ready t)
+  (message "Client is ready for normal operations")
+  ;; Notifications don't return a response
+  nil)
+
+;; Example tool/method
 (defun hello ()
   "Handle hello method calls."
+  (unless mcp-client-ready
+    (error "Client not ready. Send initialized notification first."))
   "hello world")
+
+;; Method to check if server is initialized
+(defun mcp-require-initialization ()
+  "Check if server is initialized, return error if not."
+  (unless mcp-server-initialized
+    (error "Server not initialized. Call initialize first.")))
 
 (defun jsonrpc-server-handler (proc string)
   "Handle HTTP requests for JSON-RPC."
@@ -19,13 +72,30 @@
                  "")))
     
     (when (> (length body) 0)
-      (let* ((response-json (json-rpc-server-handle body '(hello)))
-             (response-length (length response-json)))
-        (process-send-string proc
-                            (format "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s"
-                                   response-length
-                                   response-json))))
-  
+      (let* ((request (json-parse-string body :object-type 'alist))
+             (method (alist-get 'method request))
+             (id (alist-get 'id request))
+             (params (alist-get 'params request)))
+        
+        ;; Handle notifications separately (no ID)
+        (if (null id)
+            (progn
+              ;; Process notification
+              (cond
+               ((string= method "notifications/initialized")
+                (notifications/initialized))
+               (t
+                (message "Unknown notification: %s" method)))
+              ;; Send empty response for notifications
+              (process-send-string proc "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"))
+          
+          ;; Handle regular requests with json-rpc-server
+          (let* ((response-json (json-rpc-server-handle body '(initialize hello)))
+                 (response-length (length response-json)))
+            (process-send-string proc
+                                (format "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s"
+                                       response-length
+                                       response-json))))))
   (process-send-eof proc)))
 
 (defun jsonrpc-start-server-daemon ()
@@ -34,7 +104,6 @@
   (interactive)
   (when jsonrpc-server-process
     (delete-process jsonrpc-server-process))
-  
   (setq jsonrpc-server-process
         (make-network-process
          :name "jsonrpc-server"
@@ -43,7 +112,6 @@
          :host 'local
          :family 'ipv4
          :filter 'jsonrpc-server-handler))
-  
   (message "JSON-RPC server started on port %d" 8080))
 
 (defun jsonrpc-stop-server-daemon ()
@@ -55,7 +123,3 @@
         (setq jsonrpc-server-process nil)
         (message "JSON-RPC server stopped"))
     (message "No JSON-RPC server is running")))
-
-;; Start server when loaded interactively
-;; (when (not noninteractive)
-  ;; (jsonrpc-start-server-daemon 8080))
