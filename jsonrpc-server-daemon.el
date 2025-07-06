@@ -21,18 +21,17 @@
       (error "Protocol version is required"))
     
     ;; Validate protocol version
-    (unless (string= actual-protocol-version "2024-11-05")
-      (error "Unsupported protocol version: %s. Server supports: 2024-11-05" actual-protocol-version))
+    (unless (string= actual-protocol-version "2025-06-18")
+      (error "Unsupported protocol version: %s. Server supports: 2025-06-18" actual-protocol-version))
     
     (setq mcp-server-initialized t)
     
     ;; Return server capabilities and info
-    `((protocolVersion . "2024-11-05")
+    `((protocolVersion . "2025-06-18")
       (capabilities . ((logging . ())
-                      (prompts . ((listChanged . t)))
-                      (resources . ((subscribe . t)
-                                   (listChanged . t)))
-                      (tools . ((listChanged . t)))))
+                      (prompts . ())
+                      (resources . ())
+                      (tools . ())))
       (serverInfo . ((name . "emacs-mcp-server")
                     (title . "Emacs MCP Server")
                     (version . "1.0.0")))
@@ -107,12 +106,12 @@
   (setq jsonrpc-server-process
         (make-network-process
          :name "jsonrpc-server"
-         :service 8080
+         :service 3000
          :server t
          :host 'local
          :family 'ipv4
          :filter 'jsonrpc-server-handler))
-  (message "JSON-RPC server started on port %d" 8080))
+  (message "JSON-RPC server started on port %d" 3000))
 
 (defun jsonrpc-stop-server-daemon ()
   "Stop the JSON-RPC server daemon."
