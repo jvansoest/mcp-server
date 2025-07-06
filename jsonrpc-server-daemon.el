@@ -29,9 +29,11 @@
     ;; Return server capabilities and info
     `((protocolVersion . "2025-06-18")
       (capabilities . ((logging . ())
-                      (prompts . ())
-                      (resources . ())
-                      (tools . ())))
+                      (prompts . ((listChanged . t)))
+                      (resources . ((subscribe . t)
+                                    (listChanged . t)))
+                      (tools . ((listChanged . t)
+                                ))))
       (serverInfo . ((name . "emacs-mcp-server")
                     (title . "Emacs MCP Server")
                     (version . "1.0.0")))
@@ -45,12 +47,39 @@
   ;; Notifications don't return a response
   nil)
 
-;; Example tool/method
-(defun hello ()
-  "Handle hello method calls."
+;; Tools list method
+(defun tools/list (&optional cursor)
+  "Handle tools/list method calls."
   (unless mcp-client-ready
     (error "Client not ready. Send initialized notification first."))
-  "hello world")
+  `((tools . (((name . "list-buffers")
+               (title . "List Emacs buffers")
+               (description . "List all open Emacs buffers")
+               (inputSchema . ((type . "object")
+                               (properties . ())
+                               (required . ("something")))))))))
+
+;; Resources list method
+(defun resources/list (&optional cursor)
+  "Handle resources/list method calls."
+  (unless mcp-client-ready
+    (error "Client not ready. Send initialized notification first."))
+  `((resources . (((uri . "file://example.txt")
+                   (name . "example.txt")
+                   (description . "Example text file")
+                   (mimeType . "text/plain"))
+                  ((uri . "file://config.json")
+                   (name . "config.json")
+                   (description . "Configuration file")
+                   (mimeType . "application/json"))))))
+
+;; List buffers tool/method
+(defun list-buffers ()
+  "Handle list-buffers method calls."
+  (unless mcp-client-ready
+    (error "Client not ready. Send initialized notification first."))
+  (let ((buffer-list (mapcar (lambda (buf) (buffer-name buf)) (buffer-list))))
+    (format "Open Emacs buffers:\n%s" (mapconcat 'identity buffer-list "\n"))))
 
 ;; Method to check if server is initialized
 (defun mcp-require-initialization ()
@@ -62,6 +91,8 @@
   "Handle HTTP requests for JSON-RPC."
   (let* ((lines (split-string string "\r\n"))
          (request-line (car lines))
+         (request-parts (split-string request-line " "))
+         (path (nth 1 request-parts))
          (headers (cdr lines))
          (body-start (cl-position "" headers :test 'string=))
          (body (if body-start
@@ -70,31 +101,43 @@
                              "\r\n")
                  "")))
     
-    (when (> (length body) 0)
-      (let* ((request (json-parse-string body :object-type 'alist))
-             (method (alist-get 'method request))
-             (id (alist-get 'id request))
-             (params (alist-get 'params request)))
-        
-        ;; Handle notifications separately (no ID)
-        (if (null id)
-            (progn
-              ;; Process notification
-              (cond
-               ((string= method "notifications/initialized")
-                (notifications/initialized))
-               (t
-                (message "Unknown notification: %s" method)))
-              ;; Send empty response for notifications
-              (process-send-string proc "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"))
+    ;; Check if request is for /mcp route
+    (if (not (string= path "/mcp"))
+        ;; Return 404 for non-/mcp routes
+        (process-send-string proc "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
+      
+      ;; Process /mcp route
+      (when (> (length body) 0)
+        (let* ((request (json-parse-string body :object-type 'alist))
+               (method (alist-get 'method request))
+               (id (alist-get 'id request))
+               (params (alist-get 'params request)))
           
-          ;; Handle regular requests with json-rpc-server
-          (let* ((response-json (json-rpc-server-handle body '(initialize hello)))
-                 (response-length (length response-json)))
-            (process-send-string proc
-                                (format "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s"
-                                       response-length
-                                       response-json))))))
+          ;; Log request information
+          (message "Received request - Method: %s, ID: %s, Params: %s" 
+                   method id params)
+          
+          ;; Handle notifications separately (no ID)
+          (if (null id)
+              (progn
+                ;; Process notification
+                (cond
+                 ((string= method "notifications/initialized")
+                  (notifications/initialized))
+                 (t
+                  (message "Unknown notification: %s" method)))
+                ;; Send empty response for notifications
+                (process-send-string proc "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"))
+            
+            ;; Handle regular requests with json-rpc-server
+            (let* ((response-json (json-rpc-server-handle body '(initialize list-buffers tools/list resources/list)))
+                   (response-length (length response-json)))
+              (progn
+                (message response-json)
+                (process-send-string proc
+                                     (format "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s"
+                                             response-length
+                                             response-json))))))))
   (process-send-eof proc)))
 
 (defun jsonrpc-start-server-daemon ()

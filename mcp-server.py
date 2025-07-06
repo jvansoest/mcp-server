@@ -12,7 +12,7 @@ from starlette.routing import Mount
 from starlette.types import Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
-# claude mcp add --transport http mcp-server http://localhost:3000
+# claude mcp add --transport http mcp-server http://localhost:3000/mcp
 
 @click.command()
 @click.option("--port", default=3000, help="Port to listen on for HTTP")
@@ -119,6 +119,7 @@ def main(port="3000", log_level="INFO", json_response=True) -> int:
         # Handle the request
         await session_manager.handle_request(scope, new_receive, collecting_send)
 
+
     @contextlib.asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
         """Context manager for session manager."""
@@ -132,7 +133,7 @@ def main(port="3000", log_level="INFO", json_response=True) -> int:
     # Create an ASGI application using the transport
     starlette_app = Starlette(debug=True, routes=[Mount("/mcp", app=handle_streamable_http),], lifespan=lifespan,)
     import uvicorn
-    uvicorn.run(starlette_app, host="127.0.0.1", port=port)
+    uvicorn.run(starlette_app, host="0.0.0.0", port=port)
     return 0
 
 if __name__ == "__main__":
