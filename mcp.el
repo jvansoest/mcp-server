@@ -29,9 +29,9 @@
     ;; Return server capabilities and info
     `((protocolVersion . "2025-06-18")
       (capabilities . ((logging . ())
-                      (prompts . ((listChanged . t)))
-                      (resources . ((subscribe . t)
-                                    (listChanged . t)))
+                      ;; (prompts . ((listChanged . t)))
+                      ;; (resources . ((subscribe . t)
+                      ;;               (listChanged . t)))
                       (tools . ((listChanged . t)
                                 ))))
       (serverInfo . ((name . "emacs-mcp-server")
@@ -57,29 +57,68 @@
                (description . "List all open Emacs buffers")
                (inputSchema . ((type . "object")
                                (properties . ())
-                               (required . ("something")))))))))
+                               (required . ("")))))
+              ((name . "read-buffer")
+               (title . "Read buffer content")
+               (description . "Read the content of a specific Emacs buffer by name")
+               (inputSchema . ((type . "object")
+                               (properties . ((buffer-name . ((type . "string")
+                                                               (description . "Name of the buffer to read")))))
+                               (required . ("buffer-name")))))))))
 
-;; Resources list method
-(defun resources/list (&optional cursor)
-  "Handle resources/list method calls."
-  (unless mcp-client-ready
-    (error "Client not ready. Send initialized notification first."))
-  `((resources . (((uri . "file://example.txt")
-                   (name . "example.txt")
-                   (description . "Example text file")
-                   (mimeType . "text/plain"))
-                  ((uri . "file://config.json")
-                   (name . "config.json")
-                   (description . "Configuration file")
-                   (mimeType . "application/json"))))))
+;; ;; Resources list method
+;; (defun resources/list (&optional cursor)
+;;   "Handle resources/list method calls."
+;;   (unless mcp-client-ready
+;;     (error "Client not ready. Send initialized notification first."))
+;;   `((resources . (((uri . "file://example.txt")
+;;                    (name . "example.txt")
+;;                    (description . "Example text file")
+;;                    (mimeType . "text/plain"))
+;;                   ((uri . "file://config.json")
+;;                    (name . "config.json")
+;;                    (description . "Configuration file")
+;;                    (mimeType . "application/json"))))))
 
 ;; List buffers tool/method
-(defun list-buffers ()
-  "Handle list-buffers method calls."
+(defun mcp/list-buffers ()
+  "Handle mcp/list-buffers method calls."
   (unless mcp-client-ready
     (error "Client not ready. Send initialized notification first."))
   (let ((buffer-list (mapcar (lambda (buf) (buffer-name buf)) (buffer-list))))
     (format "Open Emacs buffers:\n%s" (mapconcat 'identity buffer-list "\n"))))
+
+;; Read buffer tool/method
+(defun mcp/read-buffer (buffer-name)
+  "Handle mcp/read-buffer method calls."
+  (unless mcp-client-ready
+    (error "Client not ready. Send initialized notification first."))
+  (let ((buffer (get-buffer buffer-name)))
+    (if buffer
+        (with-current-buffer buffer
+          (buffer-string))
+      (error "Buffer '%s' not found" buffer-name))))
+
+;; Tools call method  
+(defun tools/call (&optional name arguments)
+  "Handle tools/call method calls."
+  (unless mcp-client-ready
+    (error "Client not ready. Send initialized notification first."))
+  (let ((actual-name (if (consp name) (cdr name) name))
+        (actual-arguments (if (consp arguments) (cdr arguments) arguments)))
+    (cond
+     ((string= actual-name "list-buffers")
+      `((content . (((type . "text")
+                     (text . ,(mcp/list-buffers)))))))
+     ((string= actual-name "read-buffer")
+      (let ((buffer-name (or (alist-get 'buffer-name actual-arguments)
+                            (cdr (assoc "buffer-name" actual-arguments)))))
+        (unless buffer-name
+          (error "buffer-name argument is required"))
+        `((content . (((type . "text")
+                       (text . ,(mcp/read-buffer buffer-name))))))))
+     (t
+      (error "Unknown tool: %s" actual-name)))))
 
 ;; Method to check if server is initialized
 (defun mcp-require-initialization ()
@@ -130,7 +169,7 @@
                 (process-send-string proc "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"))
             
             ;; Handle regular requests with json-rpc-server
-            (let* ((response-json (json-rpc-server-handle body '(initialize list-buffers tools/list resources/list)))
+            (let* ((response-json (json-rpc-server-handle body '(initialize mcp/list-buffers mcp/read-buffer tools/list tools/call)))
                    (response-length (length response-json)))
               (progn
                 (message response-json)
