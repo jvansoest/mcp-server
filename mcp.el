@@ -64,7 +64,16 @@
                (inputSchema . ((type . "object")
                                (properties . ((buffer-name . ((type . "string")
                                                                (description . "Name of the buffer to read")))))
-                               (required . ("buffer-name")))))))))
+                               (required . ("buffer-name")))))
+              ((name . "edit-buffer")
+               (title . "Edit buffer content")
+               (description . "Replace the content of a specific Emacs buffer")
+               (inputSchema . ((type . "object")
+                               (properties . ((buffer-name . ((type . "string")
+                                                               (description . "Name of the buffer to edit")))
+                                              (content . ((type . "string")
+                                                          (description . "New content for the buffer")))))
+                               (required . ("buffer-name" "content")))))))))
 
 ;; ;; Resources list method
 ;; (defun resources/list (&optional cursor)
@@ -95,8 +104,45 @@
     (error "Client not ready. Send initialized notification first."))
   (let ((buffer (get-buffer buffer-name)))
     (if buffer
-        (with-current-buffer buffer
-          (buffer-string))
+        (with-current-buffer buffer (buffer-string))
+      (error "Buffer '%s' not found" buffer-name))))
+
+;; Edit buffer tool/method
+(defun mcp/edit-buffer (buffer-name content)
+  "Handle mcp/edit-buffer method calls."
+  (unless mcp-client-ready
+    (error "Client not ready. Send initialized notification first."))
+  (let ((buffer (get-buffer buffer-name)))
+    (if buffer
+        (progn
+          ;; Create backup for diff
+          (let ((backup-name (concat buffer-name "-backup")))
+            (when (get-buffer backup-name) (kill-buffer backup-name))
+            (with-current-buffer buffer (clone-buffer backup-name)))
+          
+          ;; Create temporary buffer with new content
+          (let ((temp-name (concat buffer-name "-temp")))
+            (when (get-buffer temp-name)
+              (kill-buffer temp-name))
+            (with-current-buffer (get-buffer-create temp-name)
+              (insert content))
+            
+            ;; Show diff between original and proposed changes
+            (diff-buffers (get-buffer (concat buffer-name "-backup")) (get-buffer temp-name))
+            
+            ;; Ask user to accept or deny
+            (if (y-or-n-p "Accept these changes? ")
+                (progn
+                  ;; Apply changes
+                  (with-current-buffer buffer (erase-buffer) (insert content))
+                  (kill-buffer temp-name)
+                  (doom-kill-buffer-and-windows "*Diff*")
+                  (format "Buffer '%s' has been edited successfully" buffer-name))
+              (progn
+                ;; Reject changes
+                (kill-buffer temp-name)
+                (doom-kill-buffer-and-windows "*Diff*")
+                (format "Changes to buffer '%s' were rejected" buffer-name)))))
       (error "Buffer '%s' not found" buffer-name))))
 
 ;; Tools call method  
@@ -104,21 +150,29 @@
   "Handle tools/call method calls."
   (unless mcp-client-ready
     (error "Client not ready. Send initialized notification first."))
-  (let ((actual-name (if (consp name) (cdr name) name))
-        (actual-arguments (if (consp arguments) (cdr arguments) arguments)))
+  ;; (debug)
+  (let ((actual-name (cdr name))
+        (actual-arguments (cdr arguments)))
     (cond
      ((string= actual-name "list-buffers")
       `((content . (((type . "text")
                      (text . ,(mcp/list-buffers)))))))
      ((string= actual-name "read-buffer")
-      (let ((buffer-name (or (alist-get 'buffer-name actual-arguments)
-                            (cdr (assoc "buffer-name" actual-arguments)))))
+      (let ((buffer-name (cdr (assoc "buffer-name" actual-arguments))))
         (unless buffer-name
           (error "buffer-name argument is required"))
         `((content . (((type . "text")
                        (text . ,(mcp/read-buffer buffer-name))))))))
-     (t
-      (error "Unknown tool: %s" actual-name)))))
+     ((string= actual-name "edit-buffer")
+      (let ((buffer-name (cdr (assoc "buffer-name" actual-arguments)))
+            (content (cdr (assoc "content" actual-arguments))))
+        (unless buffer-name
+          (error "buffer-name argument is required"))
+        (unless content
+          (error "content argument is required"))
+        `((content . (((type . "text")
+                       (text . ,(mcp/edit-buffer buffer-name content))))))))
+     (t (error "Unknown tool: %s" actual-name)))))
 
 ;; Method to check if server is initialized
 (defun mcp-require-initialization ()
